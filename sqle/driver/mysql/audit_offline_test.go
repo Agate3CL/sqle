@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"testing"
 
+	mCtx "github.com/actiontech/sqle/sqle/driver/mysql/context"
 	"github.com/actiontech/sqle/sqle/log"
 	"github.com/actiontech/sqle/sqle/model"
 	"github.com/sirupsen/logrus"
@@ -14,7 +15,7 @@ func DefaultMysqlInspectOffline() *Inspect {
 	return &Inspect{
 		log:  log.NewEntry(),
 		inst: nil,
-		Ctx:  &Context{},
+		Ctx:  &mCtx.Context{},
 		cnf: &Config{
 			DDLOSCMinSize:      -1,
 			DMLRollbackMaxRows: -1,
@@ -1660,7 +1661,7 @@ PRIMARY KEY (id)
 `,
 			newTestResult(),
 		)
-		inspector.Ctx = NewContext(parent.Ctx)
+		inspector.Ctx = mCtx.NewContext(parent.Ctx)
 	}
 
 	for desc, sql := range map[string]string{
@@ -1714,7 +1715,7 @@ PRIMARY KEY (id)
 `,
 			newTestResult(),
 		)
-		inspector.Ctx = NewContext(parent.Ctx)
+		inspector.Ctx = mCtx.NewContext(parent.Ctx)
 	}
 
 	for desc, sql := range map[string]string{

@@ -8,6 +8,8 @@ import (
 	"strings"
 
 	"github.com/actiontech/sqle/sqle/driver"
+	mCtx "github.com/actiontech/sqle/sqle/driver/mysql/context"
+	"github.com/actiontech/sqle/sqle/driver/mysql/executor"
 	"github.com/actiontech/sqle/sqle/driver/mysql/onlineddl"
 	"github.com/actiontech/sqle/sqle/model"
 	"github.com/pkg/errors"
@@ -33,7 +35,7 @@ func init() {
 // Inspect implements driver.Driver interface
 type Inspect struct {
 	// Ctx is SQL context.
-	Ctx *Context
+	Ctx *mCtx.Context
 	// cnf is task cnf, cnf variables record in rules.
 	cnf *Config
 
@@ -51,7 +53,7 @@ type Inspect struct {
 
 	log *logrus.Entry
 	// dbConn is a SQL driver for MySQL.
-	dbConn *Executor
+	dbConn *executor.Executor
 	// isConnected represent dbConn has Connected.
 	isConnected bool
 	// isOfflineAudit represent Audit without instance.
@@ -59,7 +61,7 @@ type Inspect struct {
 }
 
 func newInspect(log *logrus.Entry, cfg *driver.Config) (driver.Driver, error) {
-	ctx := NewContext(nil)
+	ctx := mCtx.NewContext(nil)
 	ctx.UseSchema(cfg.Schema)
 
 	i := &Inspect{
@@ -331,7 +333,7 @@ type Config struct {
 	DDLGhostMinSize    int64
 }
 
-func (i *Inspect) Context() *Context {
+func (i *Inspect) Context() *mCtx.Context {
 	return i.Ctx
 }
 
@@ -364,11 +366,11 @@ func (i *Inspect) addResult(ruleName string, args ...interface{}) {
 }
 
 // getDbConn get db conn and just connect once.
-func (i *Inspect) getDbConn() (*Executor, error) {
+func (i *Inspect) getDbConn() (*executor.Executor, error) {
 	if i.isConnected {
 		return i.dbConn, nil
 	}
-	conn, err := NewExecutor(i.log, i.inst, i.Ctx.currentSchema)
+	conn, err := executor.NewExecutor(i.log, i.inst, i.Ctx.CurrentSchema)
 	if err == nil {
 		i.isConnected = true
 		i.dbConn = conn
@@ -388,7 +390,7 @@ func (i *Inspect) closeDbConn() {
 // if schema name is default, using current schema from SQL ctx.
 func (i *Inspect) getSchemaName(stmt *ast.TableName) string {
 	if stmt.Schema.String() == "" {
-		return i.Ctx.currentSchema
+		return i.Ctx.CurrentSchema
 	} else {
 		return stmt.Schema.String()
 	}
@@ -416,7 +418,7 @@ func (i *Inspect) isSchemaExist(schemaName string) (bool, error) {
 
 	if lowerCaseTableNames != "0" {
 		capitalizedSchema := make(map[string]struct{})
-		for name := range i.Ctx.schemas {
+		for name := range i.Ctx.Schemas {
 			capitalizedSchema[strings.ToUpper(name)] = struct{}{}
 		}
 		_, exist := capitalizedSchema[strings.ToUpper(schemaName)]
@@ -470,7 +472,7 @@ func (i *Inspect) isTableExist(stmt *ast.TableName) (bool, error) {
 
 	if lowerCaseTableNames != "0" {
 		capitalizedTable := make(map[string]struct{})
-		for name := range i.Ctx.schemas[schemaName].Tables {
+		for name := range i.Ctx.Schemas[schemaName].Tables {
 			capitalizedTable[strings.ToUpper(name)] = struct{}{}
 		}
 		_, exist := capitalizedTable[strings.ToUpper(stmt.Name.String())]
@@ -480,7 +482,7 @@ func (i *Inspect) isTableExist(stmt *ast.TableName) (bool, error) {
 }
 
 // getTableInfo get table info if table exist.
-func (i *Inspect) getTableInfo(stmt *ast.TableName) (*TableInfo, bool) {
+func (i *Inspect) getTableInfo(stmt *ast.TableName) (*mCtx.TableInfo, bool) {
 	schema := i.getSchemaName(stmt)
 	table := stmt.Name.String()
 	return i.Ctx.GetTable(schema, table)
@@ -497,7 +499,7 @@ func (i *Inspect) getTableSize(stmt *ast.TableName) (float64, error) {
 	}
 
 	info, _ := i.getTableInfo(stmt)
-	if !info.sizeLoad {
+	if !info.SizeLoad {
 		conn, err := i.getDbConn()
 		if err != nil {
 			return 0, err
@@ -518,7 +520,7 @@ func (i *Inspect) getSchemaEngine(stmt *ast.TableName, schemaName string) (strin
 	}
 	schema, schemaExist := i.Ctx.GetSchema(schemaName)
 	if schemaExist {
-		if schema.engineLoad {
+		if schema.EngineLoad {
 			return schema.DefaultEngine, nil
 		}
 	}
@@ -533,7 +535,7 @@ func (i *Inspect) getSchemaEngine(stmt *ast.TableName, schemaName string) (strin
 	}
 	if schemaExist {
 		schema.DefaultEngine = engine
-		schema.engineLoad = true
+		schema.EngineLoad = true
 	}
 	return engine, nil
 }
@@ -545,7 +547,7 @@ func (i *Inspect) getSchemaCharacter(stmt *ast.TableName, schemaName string) (st
 	}
 	schema, schemaExist := i.Ctx.GetSchema(schemaName)
 	if schemaExist {
-		if schema.characterLoad {
+		if schema.CharacterLoad {
 			return schema.DefaultCharacter, nil
 		}
 	}
@@ -559,14 +561,14 @@ func (i *Inspect) getSchemaCharacter(stmt *ast.TableName, schemaName string) (st
 	}
 	if schemaExist {
 		schema.DefaultCharacter = character
-		schema.characterLoad = true
+		schema.CharacterLoad = true
 	}
 	return character, nil
 }
 
 func (i *Inspect) getMaxIndexOptionForTable(stmt *ast.TableName, columnNames []string) (string, error) {
 	ti, exist := i.getTableInfo(stmt)
-	if !exist || !ti.isLoad {
+	if !exist || !ti.IsLoad {
 		return "", nil
 	}
 
@@ -610,7 +612,7 @@ func (i *Inspect) getCollationDatabase(stmt *ast.TableName, schemaName string) (
 		schemaName = i.getSchemaName(stmt)
 	}
 	schema, schemaExist := i.Ctx.GetSchema(schemaName)
-	if schemaExist && schema.collationLoad {
+	if schemaExist && schema.CollationLoad {
 		return schema.DefaultCollation, nil
 	}
 	conn, err := i.getDbConn()
@@ -624,7 +626,7 @@ func (i *Inspect) getCollationDatabase(stmt *ast.TableName, schemaName string) (
 	}
 	if schemaExist {
 		schema.DefaultCollation = collation
-		schema.collationLoad = true
+		schema.CollationLoad = true
 	}
 	return collation, nil
 }
@@ -688,7 +690,7 @@ func (i *Inspect) getPrimaryKey(stmt *ast.CreateTableStmt) (map[string]struct{},
 	return pkColumnsName, hasPk, nil
 }
 
-func (i *Inspect) getExecutionPlan(sql string) ([]*ExplainRecord, error) {
+func (i *Inspect) getExecutionPlan(sql string) ([]*executor.ExplainRecord, error) {
 	if ep, ok := i.Ctx.GetExecutionPlan(sql); ok {
 		return ep, nil
 	}
@@ -733,4 +735,71 @@ func (i *Inspect) getSystemVariable(name string) (string, error) {
 	value := results[0]["Value"]
 	i.Ctx.AddSysVar(name, value.String)
 	return value.String, nil
+}
+
+func (i *Inspect) updateContext(node ast.Node) {
+	ctx := i.Ctx
+	switch s := node.(type) {
+	case *ast.UseStmt:
+		// change current schema
+		if ctx.HasSchema(s.DBName) {
+			ctx.UseSchema(s.DBName)
+		}
+	case *ast.CreateDatabaseStmt:
+		if ctx.HasLoadSchemas() {
+			ctx.AddSchema(s.Name)
+		}
+	case *ast.CreateTableStmt:
+		schemaName := i.getSchemaName(s.Table)
+		tableName := s.Table.Name.L
+		if ctx.HasTable(schemaName, tableName) {
+			return
+		}
+		ctx.AddTable(schemaName, tableName,
+			&mCtx.TableInfo{
+				Size:          0, // table is empty after create
+				SizeLoad:      true,
+				IsLoad:        false,
+				OriginalTable: s,
+				AlterTables:   []*ast.AlterTableStmt{},
+			})
+	case *ast.DropDatabaseStmt:
+		if ctx.HasLoadSchemas() {
+			ctx.DelSchema(s.Name)
+		}
+	case *ast.DropTableStmt:
+		if ctx.HasLoadSchemas() {
+			for _, table := range s.Tables {
+				schemaName := i.getSchemaName(table)
+				tableName := table.Name.L
+				if ctx.HasTable(schemaName, tableName) {
+					ctx.DelTable(schemaName, tableName)
+				}
+			}
+		}
+
+	case *ast.AlterTableStmt:
+		info, exist := i.getTableInfo(s.Table)
+		if exist {
+			var oldTable *ast.CreateTableStmt
+			var err error
+			if info.MergedTable != nil {
+				oldTable = info.MergedTable
+			} else if info.OriginalTable != nil {
+				oldTable, err = i.parseCreateTableStmt(info.OriginalTable.Text())
+				if err != nil {
+					return
+				}
+			}
+			info.MergedTable, _ = mergeAlterToTable(oldTable, s)
+			info.AlterTables = append(info.AlterTables, s)
+			// rename table
+			if s.Table.Name.L != info.MergedTable.Table.Name.L {
+				schemaName := i.getSchemaName(s.Table)
+				i.Ctx.DelTable(schemaName, s.Table.Name.L)
+				i.Ctx.AddTable(schemaName, info.MergedTable.Table.Name.L, info)
+			}
+		}
+	default:
+	}
 }

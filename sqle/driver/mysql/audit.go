@@ -763,7 +763,7 @@ func (i *Inspect) checkInvalidUpdate(stmt *ast.UpdateStmt) error {
 	for _, table := range tables {
 		schemaName := table.Schema.String()
 		if schemaName == "" {
-			schemaName = i.Ctx.currentSchema
+			schemaName = i.Ctx.CurrentSchema
 		}
 		tableName := table.Name.String()
 		if alias, ok := tableAlias[table]; ok {
@@ -864,7 +864,7 @@ func (i *Inspect) checkInvalidDelete(stmt *ast.DeleteStmt) error {
 	for _, table := range tables {
 		schemaName := table.Schema.String()
 		if schemaName == "" {
-			schemaName = i.Ctx.currentSchema
+			schemaName = i.Ctx.CurrentSchema
 		}
 		tableName := table.Name.String()
 		createStmt, exist, err := i.getCreateTableStmt(table)

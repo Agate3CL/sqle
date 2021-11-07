@@ -9,6 +9,7 @@ import (
 	"strings"
 	"unicode"
 
+	"github.com/actiontech/sqle/sqle/driver/mysql/executor"
 	"github.com/actiontech/sqle/sqle/model"
 	"github.com/actiontech/sqle/sqle/utils"
 
@@ -2494,15 +2495,15 @@ func checkExplain(rule model.Rule, i *Inspect, node ast.Node) error {
 		return nil
 	}
 	for _, record := range epRecords {
-		if strings.Contains(record.Extra, ExplainRecordExtraUsingFilesort) {
+		if strings.Contains(record.Extra, executor.ExplainRecordExtraUsingFilesort) {
 			i.addResult(DMLCheckExplainExtraUsingFilesort)
 		}
-		if strings.Contains(record.Extra, ExplainRecordExtraUsingTemporary) {
+		if strings.Contains(record.Extra, executor.ExplainRecordExtraUsingTemporary) {
 			i.addResult(DMLCheckExplainExtraUsingTemporary)
 		}
 
 		defaultRule := RuleHandlerMap[DMLCheckExplainAccessTypeAll].Rule
-		if record.Type == ExplainRecordAccessTypeAll && record.Rows > rule.GetValueInt(&defaultRule) {
+		if record.Type == executor.ExplainRecordAccessTypeAll && record.Rows > rule.GetValueInt(&defaultRule) {
 			i.addResult(DMLCheckExplainAccessTypeAll, record.Rows)
 		}
 	}

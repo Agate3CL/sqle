@@ -4,6 +4,7 @@ import (
 	"database/sql/driver"
 	"fmt"
 
+	"github.com/actiontech/sqle/sqle/driver/mysql/executor"
 	"github.com/actiontech/sqle/sqle/model"
 
 	"github.com/labstack/gommon/log"
@@ -27,7 +28,7 @@ func (i *Inspect) CommitDDL(sql *model.BaseSQL) error {
 
 func (i *Inspect) CommitDMLs(sqls []*model.BaseSQL) error {
 	var retErr error
-	var conn *Executor
+	var conn *executor.Executor
 	var startBinlogFile, endBinlogFile string
 	var startBinlogPos, endBinlogPos int64
 	var results []driver.Result

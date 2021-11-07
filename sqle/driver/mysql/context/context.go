@@ -1,15 +1,16 @@
-package mysql
+package context
 
 import (
+	"github.com/actiontech/sqle/sqle/driver/mysql/executor"
 	"github.com/pingcap/parser/ast"
 )
 
 type TableInfo struct {
 	Size     float64
-	sizeLoad bool
+	SizeLoad bool
 
-	// isLoad indicate whether TableInfo load from database or not.
-	isLoad bool
+	// IsLoad indicate whether TableInfo load from database or not.
+	IsLoad bool
 
 	// OriginalTable save parser object from db by query "show create table ...";
 	// using in inspect and generate rollback sql
@@ -24,24 +25,24 @@ type TableInfo struct {
 
 type SchemaInfo struct {
 	DefaultEngine    string
-	engineLoad       bool
+	EngineLoad       bool
 	DefaultCharacter string
-	characterLoad    bool
+	CharacterLoad    bool
 	DefaultCollation string
-	collationLoad    bool
+	CollationLoad    bool
 	Tables           map[string]*TableInfo
 }
 
 type Context struct {
-	// currentSchema will change after sql "use database"
-	currentSchema string
+	// CurrentSchema will change after sql "use database"
+	CurrentSchema string
 
-	schemas map[string]*SchemaInfo
+	Schemas map[string]*SchemaInfo
 	// if schemas info has collected, set true
 	schemaHasLoad bool
 
 	// executionPlan store batch SQLs' execution plan during one inspect context.
-	executionPlan map[string][]*ExplainRecord
+	executionPlan map[string][]*executor.ExplainRecord
 
 	// sysVars keep some MySQL global system variables during one inspect context.
 	sysVars map[string]string
@@ -49,16 +50,16 @@ type Context struct {
 
 func NewContext(parent *Context) *Context {
 	ctx := &Context{
-		schemas:       map[string]*SchemaInfo{},
-		executionPlan: map[string][]*ExplainRecord{},
+		Schemas:       map[string]*SchemaInfo{},
+		executionPlan: map[string][]*executor.ExplainRecord{},
 		sysVars:       map[string]string{},
 	}
 	if parent == nil {
 		return ctx
 	}
 	ctx.schemaHasLoad = parent.schemaHasLoad
-	ctx.currentSchema = parent.currentSchema
-	for schemaName, schema := range parent.schemas {
+	ctx.CurrentSchema = parent.CurrentSchema
+	for schemaName, schema := range parent.Schemas {
 		newSchema := &SchemaInfo{
 			Tables: map[string]*TableInfo{},
 		}
@@ -68,14 +69,14 @@ func NewContext(parent *Context) *Context {
 		for tableName, table := range schema.Tables {
 			newSchema.Tables[tableName] = &TableInfo{
 				Size:          table.Size,
-				sizeLoad:      table.sizeLoad,
-				isLoad:        table.isLoad,
+				SizeLoad:      table.SizeLoad,
+				IsLoad:        table.IsLoad,
 				OriginalTable: table.OriginalTable,
 				MergedTable:   table.MergedTable,
 				AlterTables:   table.AlterTables,
 			}
 		}
-		ctx.schemas[schemaName] = newSchema
+		ctx.Schemas[schemaName] = newSchema
 	}
 
 	for k, v := range parent.sysVars {
@@ -107,13 +108,13 @@ func (c *Context) LoadSchemas(schemas []string) {
 		return
 	}
 	for _, schema := range schemas {
-		c.schemas[schema] = &SchemaInfo{}
+		c.Schemas[schema] = &SchemaInfo{}
 	}
 	c.SetSchemasLoad()
 }
 
 func (c *Context) GetSchema(schemaName string) (*SchemaInfo, bool) {
-	schema, has := c.schemas[schemaName]
+	schema, has := c.Schemas[schemaName]
 	return schema, has
 }
 
@@ -126,13 +127,13 @@ func (c *Context) AddSchema(name string) {
 	if c.HasSchema(name) {
 		return
 	}
-	c.schemas[name] = &SchemaInfo{
+	c.Schemas[name] = &SchemaInfo{
 		Tables: map[string]*TableInfo{},
 	}
 }
 
 func (c *Context) DelSchema(name string) {
-	delete(c.schemas, name)
+	delete(c.Schemas, name)
 }
 
 func (c *Context) HasLoadTables(schemaName string) (hasLoad bool) {
@@ -157,7 +158,7 @@ func (c *Context) LoadTables(schemaName string, tablesName []string) {
 	schema.Tables = map[string]*TableInfo{}
 	for _, name := range tablesName {
 		schema.Tables[name] = &TableInfo{
-			isLoad:      true,
+			IsLoad:      true,
 			AlterTables: []*ast.AlterTableStmt{},
 		}
 	}
@@ -200,81 +201,14 @@ func (c *Context) DelTable(schemaName, tableName string) {
 }
 
 func (c *Context) UseSchema(schema string) {
-	c.currentSchema = schema
+	c.CurrentSchema = schema
 }
 
-func (c *Context) AddExecutionPlan(sql string, records []*ExplainRecord) {
+func (c *Context) AddExecutionPlan(sql string, records []*executor.ExplainRecord) {
 	c.executionPlan[sql] = records
 }
 
-func (c *Context) GetExecutionPlan(sql string) ([]*ExplainRecord, bool) {
+func (c *Context) GetExecutionPlan(sql string) ([]*executor.ExplainRecord, bool) {
 	records, ok := c.executionPlan[sql]
 	return records, ok
-}
-
-func (i *Inspect) updateContext(node ast.Node) {
-	ctx := i.Ctx
-	switch s := node.(type) {
-	case *ast.UseStmt:
-		// change current schema
-		if ctx.HasSchema(s.DBName) {
-			ctx.UseSchema(s.DBName)
-		}
-	case *ast.CreateDatabaseStmt:
-		if ctx.HasLoadSchemas() {
-			ctx.AddSchema(s.Name)
-		}
-	case *ast.CreateTableStmt:
-		schemaName := i.getSchemaName(s.Table)
-		tableName := s.Table.Name.L
-		if ctx.HasTable(schemaName, tableName) {
-			return
-		}
-		ctx.AddTable(schemaName, tableName,
-			&TableInfo{
-				Size:          0, // table is empty after create
-				sizeLoad:      true,
-				isLoad:        false,
-				OriginalTable: s,
-				AlterTables:   []*ast.AlterTableStmt{},
-			})
-	case *ast.DropDatabaseStmt:
-		if ctx.HasLoadSchemas() {
-			ctx.DelSchema(s.Name)
-		}
-	case *ast.DropTableStmt:
-		if ctx.HasLoadSchemas() {
-			for _, table := range s.Tables {
-				schemaName := i.getSchemaName(table)
-				tableName := table.Name.L
-				if ctx.HasTable(schemaName, tableName) {
-					ctx.DelTable(schemaName, tableName)
-				}
-			}
-		}
-
-	case *ast.AlterTableStmt:
-		info, exist := i.getTableInfo(s.Table)
-		if exist {
-			var oldTable *ast.CreateTableStmt
-			var err error
-			if info.MergedTable != nil {
-				oldTable = info.MergedTable
-			} else if info.OriginalTable != nil {
-				oldTable, err = i.parseCreateTableStmt(info.OriginalTable.Text())
-				if err != nil {
-					return
-				}
-			}
-			info.MergedTable, _ = mergeAlterToTable(oldTable, s)
-			info.AlterTables = append(info.AlterTables, s)
-			// rename table
-			if s.Table.Name.L != info.MergedTable.Table.Name.L {
-				schemaName := i.getSchemaName(s.Table)
-				i.Ctx.DelTable(schemaName, s.Table.Name.L)
-				i.Ctx.AddTable(schemaName, info.MergedTable.Table.Name.L, info)
-			}
-		}
-	default:
-	}
 }

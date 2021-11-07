@@ -7,6 +7,8 @@ import (
 	"testing"
 
 	"github.com/actiontech/sqle/sqle/driver"
+	mCtx "github.com/actiontech/sqle/sqle/driver/mysql/context"
+	"github.com/actiontech/sqle/sqle/driver/mysql/executor"
 	"github.com/actiontech/sqle/sqle/log"
 	"github.com/actiontech/sqle/sqle/model"
 
@@ -115,6 +117,42 @@ func (t *testResult) message() string {
 
 func DefaultMysqlInspect() *Inspect {
 	log.Logger().SetLevel(logrus.ErrorLevel)
+
+	parentCtx := &mCtx.Context{
+		CurrentSchema: "exist_db",
+		Schemas: map[string]*mCtx.SchemaInfo{
+			"exist_db": {
+				DefaultEngine:    "InnoDB",
+				EngineLoad:       true,
+				DefaultCharacter: "utf8mb4",
+				CharacterLoad:    true,
+				Tables: map[string]*mCtx.TableInfo{
+					"exist_tb_1": {
+						SizeLoad:      true,
+						IsLoad:        true,
+						Size:          1,
+						OriginalTable: getTestCreateTableStmt1(),
+					},
+					"exist_tb_2": {
+						SizeLoad:      true,
+						IsLoad:        true,
+						Size:          1,
+						OriginalTable: getTestCreateTableStmt2(),
+					},
+					"exist_tb_3": {
+						SizeLoad:      true,
+						IsLoad:        true,
+						Size:          1,
+						OriginalTable: getTestCreateTableStmt3(),
+					},
+				},
+			},
+		},
+	}
+	parentCtx.SetSchemasLoad()
+	ctx := mCtx.NewContext(parentCtx)
+	ctx.AddSysVar("lower_case_table_names", "0")
+
 	return &Inspect{
 		log: log.NewEntry(),
 		inst: &model.Instance{
@@ -124,42 +162,7 @@ func DefaultMysqlInspect() *Inspect {
 			Password: "123456",
 			DbType:   model.DBTypeMySQL,
 		},
-		Ctx: &Context{
-			currentSchema: "exist_db",
-			schemaHasLoad: true,
-			executionPlan: map[string][]*ExplainRecord{},
-			sysVars: map[string]string{
-				"lower_case_table_names": "0",
-			},
-			schemas: map[string]*SchemaInfo{
-				"exist_db": {
-					DefaultEngine:    "InnoDB",
-					engineLoad:       true,
-					DefaultCharacter: "utf8mb4",
-					characterLoad:    true,
-					Tables: map[string]*TableInfo{
-						"exist_tb_1": {
-							sizeLoad:      true,
-							isLoad:        true,
-							Size:          1,
-							OriginalTable: getTestCreateTableStmt1(),
-						},
-						"exist_tb_2": {
-							sizeLoad:      true,
-							isLoad:        true,
-							Size:          1,
-							OriginalTable: getTestCreateTableStmt2(),
-						},
-						"exist_tb_3": {
-							sizeLoad:      true,
-							isLoad:        true,
-							Size:          1,
-							OriginalTable: getTestCreateTableStmt3(),
-						},
-					},
-				},
-			},
-		},
+		Ctx: ctx,
 		cnf: &Config{
 			DDLOSCMinSize:      16,
 			DDLGhostMinSize:    16,
@@ -2687,7 +2690,7 @@ PRIMARY KEY (id)
 `,
 			newTestResult(),
 		)
-		inspector.Ctx = NewContext(parent.Ctx)
+		inspector.Ctx = mCtx.NewContext(parent.Ctx)
 	}
 
 	for desc, sql := range map[string]string{
@@ -2741,7 +2744,7 @@ PRIMARY KEY (id)
 `,
 			newTestResult(),
 		)
-		inspector.Ctx = NewContext(parent.Ctx)
+		inspector.Ctx = mCtx.NewContext(parent.Ctx)
 	}
 
 	for desc, sql := range map[string]string{
@@ -2949,21 +2952,21 @@ ALTER TABLE exist_db.exist_tb_1 ADD INDEX idx_v3(v3);
 
 func Test_CheckExplain_ShouldNotError(t *testing.T) {
 	inspect1 := DefaultMysqlInspect()
-	inspect1.Ctx.AddExecutionPlan("select * from exist_tb_1", []*ExplainRecord{{
+	inspect1.Ctx.AddExecutionPlan("select * from exist_tb_1", []*executor.ExplainRecord{{
 		Type: "ALL",
 		Rows: 10,
 	}})
 	runSingleRuleInspectCase(RuleHandlerMap[DMLCheckExplainAccessTypeAll].Rule, t, "", inspect1, "select * from exist_tb_1", newTestResult())
 
 	inspect2 := DefaultMysqlInspect()
-	inspect2.Ctx.AddExecutionPlan("select * from exist_tb_1", []*ExplainRecord{{
+	inspect2.Ctx.AddExecutionPlan("select * from exist_tb_1", []*executor.ExplainRecord{{
 		Type: "ALL",
 		Rows: 10,
 	}})
 	runSingleRuleInspectCase(RuleHandlerMap[DMLCheckExplainExtraUsingFilesort].Rule, t, "", inspect2, "select * from exist_tb_1", newTestResult())
 
 	inspect3 := DefaultMysqlInspect()
-	inspect3.Ctx.AddExecutionPlan("select * from exist_tb_1", []*ExplainRecord{{
+	inspect3.Ctx.AddExecutionPlan("select * from exist_tb_1", []*executor.ExplainRecord{{
 		Type: "ALL",
 		Rows: 10,
 	}})
@@ -2972,33 +2975,33 @@ func Test_CheckExplain_ShouldNotError(t *testing.T) {
 
 func Test_CheckExplain_ShouldError(t *testing.T) {
 	inspect1 := DefaultMysqlInspect()
-	inspect1.Ctx.AddExecutionPlan("select * from exist_tb_1", []*ExplainRecord{{
+	inspect1.Ctx.AddExecutionPlan("select * from exist_tb_1", []*executor.ExplainRecord{{
 		Type: "ALL",
 		Rows: 10001,
 	}})
 	runSingleRuleInspectCase(RuleHandlerMap[DMLCheckExplainAccessTypeAll].Rule, t, "", inspect1, "select * from exist_tb_1", newTestResult().addResult(DMLCheckExplainAccessTypeAll, 10001))
 
 	inspect2 := DefaultMysqlInspect()
-	inspect2.Ctx.AddExecutionPlan("select * from exist_tb_1", []*ExplainRecord{{
+	inspect2.Ctx.AddExecutionPlan("select * from exist_tb_1", []*executor.ExplainRecord{{
 		Type:  "ALL",
 		Rows:  10,
-		Extra: ExplainRecordExtraUsingTemporary,
+		Extra: executor.ExplainRecordExtraUsingTemporary,
 	}})
 	runSingleRuleInspectCase(RuleHandlerMap[DMLCheckExplainExtraUsingTemporary].Rule, t, "", inspect2, "select * from exist_tb_1", newTestResult().addResult(DMLCheckExplainExtraUsingTemporary))
 
 	inspect3 := DefaultMysqlInspect()
-	inspect3.Ctx.AddExecutionPlan("select * from exist_tb_1", []*ExplainRecord{{
+	inspect3.Ctx.AddExecutionPlan("select * from exist_tb_1", []*executor.ExplainRecord{{
 		Type:  "ALL",
 		Rows:  10,
-		Extra: ExplainRecordExtraUsingFilesort,
+		Extra: executor.ExplainRecordExtraUsingFilesort,
 	}})
 	runSingleRuleInspectCase(RuleHandlerMap[DMLCheckExplainExtraUsingFilesort].Rule, t, "", inspect3, "select * from exist_tb_1", newTestResult().addResult(DMLCheckExplainExtraUsingFilesort))
 
 	inspect4 := DefaultMysqlInspect()
-	inspect4.Ctx.AddExecutionPlan("select * from exist_tb_1", []*ExplainRecord{{
+	inspect4.Ctx.AddExecutionPlan("select * from exist_tb_1", []*executor.ExplainRecord{{
 		Type:  "ALL",
 		Rows:  100001,
-		Extra: strings.Join([]string{ExplainRecordExtraUsingFilesort, ExplainRecordExtraUsingTemporary}, ";"),
+		Extra: strings.Join([]string{executor.ExplainRecordExtraUsingFilesort, executor.ExplainRecordExtraUsingTemporary}, ";"),
 	}})
 
 	ruleDMLCheckExplainExtraUsingFilesort := RuleHandlerMap[DMLCheckExplainExtraUsingFilesort].Rule
@@ -3014,15 +3017,15 @@ func Test_CheckExplain_ShouldError(t *testing.T) {
 		newTestResult().addResult(DMLCheckExplainExtraUsingFilesort).addResult(DMLCheckExplainExtraUsingTemporary).addResult(DMLCheckExplainAccessTypeAll, 100001))
 
 	inspect5 := DefaultMysqlInspect()
-	inspect5.Ctx.AddExecutionPlan("select * from exist_tb_1;", []*ExplainRecord{{
+	inspect5.Ctx.AddExecutionPlan("select * from exist_tb_1;", []*executor.ExplainRecord{{
 		Type: "ALL",
 		Rows: 100001,
 	}})
-	inspect5.Ctx.AddExecutionPlan("select * from exist_tb_1 where id = 1;", []*ExplainRecord{{
-		Extra: ExplainRecordExtraUsingFilesort,
+	inspect5.Ctx.AddExecutionPlan("select * from exist_tb_1 where id = 1;", []*executor.ExplainRecord{{
+		Extra: executor.ExplainRecordExtraUsingFilesort,
 	}})
-	inspect5.Ctx.AddExecutionPlan("select * from exist_tb_1 where id = 2;", []*ExplainRecord{{
-		Extra: ExplainRecordExtraUsingTemporary,
+	inspect5.Ctx.AddExecutionPlan("select * from exist_tb_1 where id = 2;", []*executor.ExplainRecord{{
+		Extra: executor.ExplainRecordExtraUsingTemporary,
 	}})
 
 	inspect5.rules = []*model.Rule{
@@ -3314,3 +3317,175 @@ func runDefaultRulesInspectCaseWithWL(t *testing.T, desc string, i *Inspect,
 	i.rules = ptrRules
 	inspectCase(t, desc, i, wl, sql, results...)
 }
+
+func TestContext(t *testing.T) {
+	handler := RuleHandlerMap[DDLCheckAlterTableNeedMerge]
+	delete(RuleHandlerMap, DDLCheckAlterTableNeedMerge)
+	defer func() {
+		RuleHandlerMap[DDLCheckAlterTableNeedMerge] = handler
+	}()
+
+	runDefaultRulesInspectCase(t, "rename table and drop column: table not exists", DefaultMysqlInspect(),
+		`
+use exist_db;
+create table if not exists not_exist_tb_1 (
+id bigint unsigned NOT NULL AUTO_INCREMENT COMMENT "unit test",
+v1 varchar(255) NOT NULL DEFAULT "unit test" COMMENT "unit test",
+v2 varchar(255) NOT NULL DEFAULT "unit test" COMMENT "unit test",
+PRIMARY KEY (id)
+)ENGINE=InnoDB AUTO_INCREMENT=3 DEFAULT CHARSET=utf8mb4 COMMENT="unit test";
+alter table not_exist_tb_1 rename as not_exist_tb_2;
+alter table not_exist_tb_2 drop column v1;
+alter table not_exist_tb_1 drop column v1;
+`,
+		newTestResult(),
+		newTestResult(),
+		newTestResult(),
+		newTestResult(),
+		newTestResult().add(model.RuleLevelError, TableNotExistMessage, "exist_db.not_exist_tb_1"),
+	)
+
+	runDefaultRulesInspectCase(t, "drop column twice: column not exists(1)", DefaultMysqlInspect(),
+		`
+use exist_db;
+alter table exist_tb_1 drop column v1;
+alter table exist_tb_1 drop column v1;
+`,
+		newTestResult(),
+		newTestResult(),
+		newTestResult().add(model.RuleLevelError, ColumnNotExistMessage, "v1"),
+	)
+	runDefaultRulesInspectCase(t, "drop column twice: column not exists(2)", DefaultMysqlInspect(),
+		`
+use exist_db;
+create table if not exists not_exist_tb_1 (
+id bigint unsigned NOT NULL AUTO_INCREMENT COMMENT "unit test",
+v1 varchar(255) NOT NULL DEFAULT "unit test" COMMENT "unit test",
+v2 varchar(255) NOT NULL DEFAULT "unit test" COMMENT "unit test",
+PRIMARY KEY (id)
+)ENGINE=InnoDB AUTO_INCREMENT=3 DEFAULT CHARSET=utf8mb4 COMMENT="unit test";
+alter table not_exist_tb_1 drop column v1;
+alter table not_exist_tb_1 drop column v1;
+`,
+		newTestResult(),
+		newTestResult(),
+		newTestResult(),
+		newTestResult().add(model.RuleLevelError, ColumnNotExistMessage, "v1"),
+	)
+
+	runDefaultRulesInspectCase(t, "change and drop column: column not exists", DefaultMysqlInspect(),
+		`
+use exist_db;
+alter table exist_tb_1 change column v1 v11 varchar(255) DEFAULT "v11" COMMENT "uint test";
+alter table exist_tb_1 drop column v1;
+`,
+		newTestResult(),
+		newTestResult(),
+		newTestResult().add(model.RuleLevelError, ColumnNotExistMessage, "v1"),
+	)
+
+	runDefaultRulesInspectCase(t, "Add column twice: column exists", DefaultMysqlInspect(),
+		`
+use exist_db;
+alter table exist_tb_1 add column v3 varchar(255) DEFAULT "v3" COMMENT "uint test";
+alter table exist_tb_1 add column v3 varchar(255) DEFAULT "v3" COMMENT "uint test";
+`,
+		newTestResult(),
+		newTestResult(),
+		newTestResult().add(model.RuleLevelError, ColumnExistMessage, "v3"),
+	)
+
+	runDefaultRulesInspectCase(t, "drop index twice: index not exists", DefaultMysqlInspect(),
+		`
+use exist_db;
+alter table exist_tb_1 drop index idx_1;
+alter table exist_tb_1 drop index idx_1;
+`,
+		newTestResult(),
+		newTestResult(),
+		newTestResult().add(model.RuleLevelError, IndexNotExistMessage, "idx_1"),
+	)
+	runDefaultRulesInspectCase(t, "drop index, rename index: index not exists", DefaultMysqlInspect(),
+		`
+use exist_db;
+alter table exist_tb_1 rename index idx_1 to idx_2;
+alter table exist_tb_1 drop index idx_1;
+`,
+		newTestResult(),
+		newTestResult(),
+		newTestResult().add(model.RuleLevelError, IndexNotExistMessage, "idx_1"),
+	)
+}
+
+func TestParentContext(t *testing.T) {
+	handler := RuleHandlerMap[DDLCheckAlterTableNeedMerge]
+	delete(RuleHandlerMap, DDLCheckAlterTableNeedMerge)
+	// It's trick :),
+	// elegant method: unit test support MySQL.
+	delete(RuleHandlerMap, DDLCheckTableWithoutInnoDBUTF8MB4)
+	defer func() {
+		RuleHandlerMap[DDLCheckAlterTableNeedMerge] = handler
+	}()
+
+	inspect1 := DefaultMysqlInspect()
+	runDefaultRulesInspectCase(t, "ddl 1: create table, ok", inspect1,
+		`
+use exist_db;
+create table if not exists not_exist_tb_1 (
+id bigint unsigned NOT NULL AUTO_INCREMENT COMMENT "unit test",
+v1 varchar(255) NOT NULL DEFAULT "unit test" COMMENT "unit test",
+v2 varchar(255) NOT NULL DEFAULT "unit test" COMMENT "unit test",
+PRIMARY KEY (id)
+)ENGINE=InnoDB AUTO_INCREMENT=3 DEFAULT CHARSET=utf8mb4 COMMENT="unit test";
+`,
+		newTestResult(),
+		newTestResult(),
+	)
+
+	inspect2 := DefaultMysqlInspect()
+	inspect2.Ctx = mCtx.NewContext(inspect1.Ctx)
+	runDefaultRulesInspectCase(t, "ddl 2: drop column, ok", inspect2,
+		`
+alter table not_exist_tb_1 drop column v1;
+`,
+		newTestResult(),
+	)
+
+	inspect3 := DefaultMysqlInspect()
+	inspect3.Ctx = mCtx.NewContext(inspect2.Ctx)
+	runDefaultRulesInspectCase(t, "ddl 3: drop column, column not exist", inspect3,
+		`
+alter table not_exist_tb_1 drop column v1;
+`,
+		newTestResult().add(model.RuleLevelError, ColumnNotExistMessage, "v1"),
+	)
+
+	inspect4 := DefaultMysqlInspect()
+	inspect4.Ctx = mCtx.NewContext(inspect2.Ctx)
+	runDefaultRulesInspectCase(t, "ddl 4: add column, ok", inspect4,
+		`
+alter table not_exist_tb_1 add column v3 varchar(255) NOT NULL DEFAULT "unit test" COMMENT "unit test";
+`,
+		newTestResult(),
+	)
+
+	inspect5 := DefaultMysqlInspect()
+	inspect5.Ctx = mCtx.NewContext(inspect4.Ctx)
+	runDefaultRulesInspectCase(t, "dml 1: insert, column not exist", inspect5,
+		`
+insert into not_exist_tb_1 (id,v1,v2) values (1,"1","1");
+`,
+		newTestResult().add(model.RuleLevelError, ColumnNotExistMessage, "v1"),
+	)
+
+	inspect6 := DefaultMysqlInspect()
+	inspect6.Ctx = mCtx.NewContext(inspect4.Ctx)
+	runDefaultRulesInspectCase(t, "dml 2: insert, ok", inspect6,
+		`
+insert into not_exist_tb_1 (id,v2,v3) values (1,"1","1");
+`,
+		newTestResult(),
+	)
+}
+
+// TODO: Add more test for relation audit, like create a database and create a table in it.
