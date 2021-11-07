@@ -2,8 +2,16 @@ package context
 
 import (
 	"github.com/actiontech/sqle/sqle/driver/mysql/executor"
+	"github.com/actiontech/sqle/sqle/driver/mysql/util"
+	"github.com/actiontech/sqle/sqle/log"
+	"github.com/pingcap/parser"
 	"github.com/pingcap/parser/ast"
 )
+
+type ColumnInfo struct {
+	// selectivity euqals to the cardinality of column row set / table row set.
+	selectivity *float64
+}
 
 type TableInfo struct {
 	Size     float64
@@ -21,6 +29,8 @@ type TableInfo struct {
 
 	// save alter table parse object from input sql;
 	AlterTables []*ast.AlterTableStmt
+
+	columnInfos map[string]*ColumnInfo
 }
 
 type SchemaInfo struct {
@@ -83,6 +93,29 @@ func NewContext(parent *Context) *Context {
 		ctx.sysVars[k] = v
 	}
 	return ctx
+}
+
+func (c *Context) GetSelectivity(tableName, columnName string) (float64, bool) {
+	if schema, ok := c.GetSchema(c.CurrentSchema); ok {
+		if table, ok := schema.Tables[tableName]; ok {
+			if column, ok := table.columnInfos[columnName]; ok {
+				if column.selectivity != nil {
+					return *column.selectivity, true
+				}
+			}
+		}
+	}
+	return 0, false
+}
+
+func (c *Context) SetSelectivity(tableName, columnName string, selectivity float64) {
+	if schema, ok := c.GetSchema(c.CurrentSchema); ok {
+		if table, ok := schema.Tables[tableName]; ok {
+			if column, ok := table.columnInfos[columnName]; ok {
+				column.selectivity = &selectivity
+			}
+		}
+	}
 }
 
 func (c *Context) GetSysVar(name string) (string, bool) {
@@ -211,4 +244,89 @@ func (c *Context) AddExecutionPlan(sql string, records []*executor.ExplainRecord
 func (c *Context) GetExecutionPlan(sql string) ([]*executor.ExplainRecord, bool) {
 	records, ok := c.executionPlan[sql]
 	return records, ok
+}
+
+// Update update the context with given ast node.
+func (c *Context) Update(node ast.Node) {
+	switch s := node.(type) {
+	case *ast.UseStmt:
+		// change current schema
+		if c.HasSchema(s.DBName) {
+			c.UseSchema(s.DBName)
+		}
+	case *ast.CreateDatabaseStmt:
+		if c.HasLoadSchemas() {
+			c.AddSchema(s.Name)
+		}
+	case *ast.CreateTableStmt:
+		schemaName := c.GetSchemaName(s.Table)
+		tableName := s.Table.Name.L
+		if c.HasTable(schemaName, tableName) {
+			return
+		}
+		c.AddTable(schemaName, tableName,
+			&TableInfo{
+				Size:          0, // table is empty after create
+				SizeLoad:      true,
+				IsLoad:        false,
+				OriginalTable: s,
+				AlterTables:   []*ast.AlterTableStmt{},
+			})
+	case *ast.DropDatabaseStmt:
+		if c.HasLoadSchemas() {
+			c.DelSchema(s.Name)
+		}
+	case *ast.DropTableStmt:
+		if c.HasLoadSchemas() {
+			for _, table := range s.Tables {
+				schemaName := c.GetSchemaName(table)
+				tableName := table.Name.L
+				if c.HasTable(schemaName, tableName) {
+					c.DelTable(schemaName, tableName)
+				}
+			}
+		}
+
+	case *ast.AlterTableStmt:
+		info, exist := c.GetTableInfo(s.Table)
+		if exist {
+			var oldTable *ast.CreateTableStmt
+			if info.MergedTable != nil {
+				oldTable = info.MergedTable
+			} else if info.OriginalTable != nil {
+				n, err := parser.New().ParseOneStmt(info.OriginalTable.Text(), "", "")
+				if err != nil {
+					log.NewEntry().Errorf("update context, parse alter table %s error: %v", info.OriginalTable.Text(), err)
+				}
+				var ok bool
+				oldTable, ok = n.(*ast.CreateTableStmt)
+				if !ok {
+					log.NewEntry().Errorf("update context, original table %s is not ast.CreateTableStmt", info.OriginalTable.Text())
+				}
+			}
+			info.MergedTable, _ = util.MergeAlterToTable(oldTable, s)
+			info.AlterTables = append(info.AlterTables, s)
+			// rename table
+			if s.Table.Name.L != info.MergedTable.Table.Name.L {
+				schemaName := c.GetSchemaName(s.Table)
+				c.DelTable(schemaName, s.Table.Name.L)
+				c.AddTable(schemaName, info.MergedTable.Table.Name.L, info)
+			}
+		}
+	default:
+	}
+}
+
+func (c *Context) GetSchemaName(node *ast.TableName) string {
+	schemaName := node.Schema.String()
+	if schemaName == "" {
+		schemaName = c.CurrentSchema
+	}
+	return schemaName
+}
+
+func (c *Context) GetTableInfo(node *ast.TableName) (*TableInfo, bool) {
+	schemaName := c.GetSchemaName(node)
+	table := node.Name.String()
+	return c.GetTable(schemaName, table)
 }

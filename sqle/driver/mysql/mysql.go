@@ -273,7 +273,7 @@ func (i *Inspect) Audit(ctx context.Context, sql string) (*driver.AuditResult, e
 	if oscCommandLine != "" {
 		i.result.Add(model.RuleLevelNotice, fmt.Sprintf("[osc]%s", oscCommandLine))
 	}
-	i.updateContext(nodes[0])
+	i.Ctx.Update(nodes[0])
 	return i.result, nil
 }
 
@@ -295,7 +295,7 @@ func (i *Inspect) GenRollbackSQL(ctx context.Context, sql string) (string, strin
 		return "", "", err
 	}
 
-	i.updateContext(nodes[0])
+	i.Ctx.Update(nodes[0])
 
 	return rollback, reason, nil
 }

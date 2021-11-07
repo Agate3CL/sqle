@@ -11,9 +11,13 @@ import (
 	"github.com/actiontech/sqle/sqle/errors"
 	"github.com/actiontech/sqle/sqle/model"
 
-	_ "github.com/denisenkom/go-mssqldb"
 	_ "github.com/go-sql-driver/mysql"
+	pkgerrors "github.com/pkg/errors"
 	"github.com/sirupsen/logrus"
+)
+
+const (
+	sqlShowSingleTableStatus = "show table status where name = '%s'"
 )
 
 const DAIL_TIMEOUT = 5 * time.Second
@@ -396,6 +400,7 @@ where table_schema = '%s' and table_name = '%s'`, schema, table)
 	}
 	return size, nil
 }
+
 func (c *Executor) ShowDefaultConfiguration(sql, column string) (string, error) {
 	if c.dbType != model.DBTypeMySQL {
 		return "", nil
@@ -413,4 +418,54 @@ func (c *Executor) ShowDefaultConfiguration(sql, column string) (string, error) 
 		return "", nil
 	}
 	return ret.String, nil
+}
+
+type TableStatus struct {
+	Name sql.NullString `json:"Name"`
+	//Engine     sql.NullString `json:"Engine"`
+	//Version    sql.NullInt64  `json:"Version"`
+	//RowFormat  sql.NullString `json:"Row_format"`
+	Rows sql.NullInt64 `json:"Rows"`
+	//AvgRowLen  sql.NullInt64  `json:"Avg_row_length"`
+	//DataLen    sql.NullInt64  `json:"Data_length"`
+	//MaxDataLen sql.NullInt64  `json:"Max_data_length"`
+	//IndexLen   sql.NullInt64  `json:"Index_length"`
+	//DataFree   sql.NullInt64  `json:"Data_free"`
+	//AutoInc    sql.NullInt64  `json:"Auto_increment"`
+	//CreateTS   sql.NullTime   `json:"Create_time"`
+	//UpdateTS   sql.NullTime   `json:"Update_time"`
+	//CheckTS    sql.NullTime   `json:"Check_time"`
+	//Collation  sql.NullString `json:"Collation"`
+	//Checksum   sql.NullString `json:"Checksum"`
+	//CreateOP   sql.NullString `json:"Create_options"`
+
+	// Comment is used to distinguish table from view.
+	// see: https://dev.mysql.com/doc/refman/5.7/en/show-table-status.html
+	Comment sql.NullString `json:"Comment"`
+}
+
+func (c *Executor) ShowTableStatus(table string) (ts *TableStatus, err error) {
+	res, err := c.Db.Query(sqlShowSingleTableStatus, table)
+	if err != nil {
+		return nil, pkgerrors.Wrap(err, "show table status error")
+	}
+
+	if len(res) != 1 {
+		return nil, pkgerrors.Errorf("table %s not found", table)
+	}
+
+	rows := sql.NullInt64{}
+	if res[0]["Rows"].Valid {
+		rows.Int64, err = strconv.ParseInt(res[0]["Rows"].String, 10, 64)
+		if err != nil {
+			return nil, pkgerrors.Wrap(err, "parse rows error")
+		}
+		rows.Valid = true
+	}
+
+	return &TableStatus{
+		Name:    res[0]["Name"],
+		Rows:    rows,
+		Comment: res[0]["Comment"],
+	}, nil
 }
